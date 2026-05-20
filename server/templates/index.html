@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}Операторська панель{% endblock %}
+{% block content %}
+<section class="hero">
+    <div>
+        <span class="eyebrow">Операторська панель</span>
+        <h2>Сучасний центр керування роботом</h2>
+        <p>Сервер отримує кадри, автоматично підвантажує YOLO, виконує виявлення цілі та повертає команду керування. Оператор може вручну вибрати потрібний об'єкт кліком по кадру.</p>
+    </div>
+    <div class="hero-actions actions-row">
+        <button class="primary-btn" onclick="refreshDashboard()">Оновити стан</button>
+        <button class="secondary-btn" onclick="clearManualTarget()">Скинути вибір цілі</button>
+    </div>
+</section>
+
+<section class="grid two">
+    <article class="card">
+        <div class="card-head">
+            <h3>Останній кадр</h3>
+            <span id="serverModel" class="pill">model: yolov8n.pt</span>
+        </div>
+        <p class="muted">Клікни по розпізнаному об'єкту на кадрі, щоб зафіксувати ціль для подальшого супроводу.</p>
+        <div class="frame-wrap selectable-frame-wrap">
+            <img id="latestFrame" class="frame-view selectable-frame" alt="frame">
+        </div>
+    </article>
+
+    <article class="card">
+        <div class="card-head">
+            <h3>Керування</h3>
+            <span id="commandBadge" class="pill violet">HOLD</span>
+        </div>
+        <div class="telemetry">
+            <div class="metric"><span>Причина</span><strong id="commandReason">Очікування даних</strong></div>
+            <div class="metric"><span>Центр цілі</span><strong id="targetCenter">—</strong></div>
+            <div class="metric"><span>Відхилення</span><strong id="targetOffset">—</strong></div>
+            <div class="metric"><span>Останній клієнт</span><strong id="clientCamera">—</strong></div>
+            <div class="metric emphasis"><span>Ручний супровід</span><strong id="manualTargetState">Автовибір цілі</strong></div>
+        </div>
+    </article>
+</section>
+
+<section class="grid three">
+    <article class="card">
+        <div class="card-head"><h3>Детекції</h3></div>
+        <div id="detectionsList" class="list-block"></div>
+    </article>
+
+    <article class="card">
+        <div class="card-head"><h3>Датасет</h3></div>
+        <div class="telemetry">
+            <div class="metric"><span>Train images</span><strong id="trainImages">0</strong></div>
+            <div class="metric"><span>Val images</span><strong id="valImages">0</strong></div>
+            <div class="metric"><span>Train labels</span><strong id="trainLabels">0</strong></div>
+            <div class="metric"><span>Val labels</span><strong id="valLabels">0</strong></div>
+        </div>
+    </article>
+
+    <article class="card">
+        <div class="card-head"><h3>Класи за замовчуванням</h3></div>
+        <div class="chips">
+            {% for item in classes %}
+            <span class="chip">{{ item }}</span>
+            {% endfor %}
+        </div>
+    </article>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let latestResult = {};
+let currentFrameMeta = { width: 0, height: 0 };
+
+function updateManualTargetView(manualTarget) {
+    const state = document.getElementById('manualTargetState');
+    if (!manualTarget || !manualTarget.active) {
+        state.textContent = 'Автовибір цілі';
+        return;
+    }
+    const label = manualTarget.label || 'object';
+    const center = Array.isArray(manualTarget.last_center) ? manualTarget.last_center.join(', ') : '—';
+    state.textContent = manualTarget.lost ? `Ціль ${label} тимчасово втрачена` : `Зафіксовано: ${label} (${center})`;
+}
+
+async function selectDetectionByPoint(x, y) {
+    const response = await fetch('/api/target/select', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({x, y})
+    });
+    const data = await response.json();
+    if (!data.success) {
+        alert(data.error || 'Не вдалося вибрати ціль');
+        return;
+    }
+    await refreshDashboard();
+}
+
+async function clearManualTarget() {
+    await fetch('/api/target/clear', {method: 'POST'});
+    await refreshDashboard();
+}
+
+async function selectDetectionCenter(center) {
+    if (!Array.isArray(center) || center.length !== 2) return;
+    await selectDetectionByPoint(center[0], center[1]);
+}
+
+function imageClickToFrameCoordinates(event) {
+    const image = event.currentTarget;
+    if (!image.naturalWidth || !image.naturalHeight) return null;
+
+    const rect = image.getBoundingClientRect();
+    const imageAspect = image.naturalWidth / image.naturalHeight;
+    const rectAspect = rect.width / rect.height;
+
+    let drawWidth;
+    let drawHeight;
+    let offsetX;
+    let offsetY;
+
+    if (rectAspect > imageAspect) {
+        drawHeight = rect.height;
+        drawWidth = drawHeight * imageAspect;
+        offsetX = (rect.width - drawWidth) / 2;
+        offsetY = 0;
+    } else {
+        drawWidth = rect.width;
+        drawHeight = drawWidth / imageAspect;
+        offsetX = 0;
+        offsetY = (rect.height - drawHeight) / 2;
+    }
+
+    const x = event.clientX - rect.left - offsetX;
+    const y = event.clientY - rect.top - offsetY;
+    if (x < 0 || y < 0 || x > drawWidth || y > drawHeight) return null;
+
+    return {
+        x: Math.round((x / drawWidth) * image.naturalWidth),
+        y: Math.round((y / drawHeight) * image.naturalHeight),
+    };
+}
+
+async function refreshDashboard() {
+    const response = await fetch('/api/system/status');
+    const data = await response.json();
+    const result = data.latest_result || {};
+    const control = result.control || {};
+    const client = data.latest_client_status || {};
+    const stats = data.dataset_stats || {};
+    const manualTarget = data.manual_target || result.manual_target || {};
+
+    latestResult = result;
+    currentFrameMeta = result.frame_size || {width: 0, height: 0};
+
+    document.getElementById('latestFrame').src = result.rendered_frame_url ? `${result.rendered_frame_url}?t=${Date.now()}` : '';
+    document.getElementById('serverModel').textContent = `model: ${result.model || 'yolov8n.pt'}`;
+    document.getElementById('commandBadge').textContent = control.command || 'WAIT';
+    document.getElementById('commandReason').textContent = control.reason || 'Дані відсутні';
+    document.getElementById('targetCenter').textContent = control.target_center ? control.target_center.join(', ') : '—';
+    document.getElementById('targetOffset').textContent = control.offset ? control.offset.join(', ') : '—';
+    document.getElementById('clientCamera').textContent = client.camera || '—';
+    updateManualTargetView(manualTarget);
+
+    document.getElementById('trainImages').textContent = stats.train_images ?? 0;
+    document.getElementById('valImages').textContent = stats.val_images ?? 0;
+    document.getElementById('trainLabels').textContent = stats.train_labels ?? 0;
+    document.getElementById('valLabels').textContent = stats.val_labels ?? 0;
+
+    const list = document.getElementById('detectionsList');
+    list.innerHTML = '';
+    const detections = result.detections || [];
+    if (!detections.length) {
+        list.innerHTML = '<p class="muted">Ще немає детекцій.</p>';
+        return;
+    }
+    detections.forEach(det => {
+        const item = document.createElement('div');
+        item.className = 'list-item';
+        const isManual = manualTarget.active && Array.isArray(manualTarget.last_box) && JSON.stringify(manualTarget.last_box) === JSON.stringify(det.box);
+        item.innerHTML = `<div class="list-main"><strong>${det.label}</strong><span>conf ${det.confidence}</span><span>center ${det.center.join(', ')}</span></div>`;
+        const actionButton = document.createElement('button');
+        actionButton.className = isManual ? 'primary-btn compact-btn' : 'secondary-btn compact-btn';
+        actionButton.textContent = isManual ? 'Зафіксовано' : 'Обрати';
+        actionButton.onclick = () => selectDetectionCenter(det.center);
+        item.appendChild(actionButton);
+        list.appendChild(item);
+    });
+}
+
+document.getElementById('latestFrame').addEventListener('click', async (event) => {
+    const point = imageClickToFrameCoordinates(event);
+    if (!point) return;
+    await selectDetectionByPoint(point.x, point.y);
+});
+
+refreshDashboard();
+setInterval(refreshDashboard, 2000);
+window.clearManualTarget = clearManualTarget;
+</script>
+{% endblock %}

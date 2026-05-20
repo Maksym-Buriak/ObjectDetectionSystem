@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Донавчання{% endblock %}
+{% block content %}
+<section class="hero">
+    <div>
+        <span class="eyebrow">Fine-tuning</span>
+        <h2>Запуск донавчання з сервера</h2>
+        <p>Сервер формує dataset.yaml, підвантажує базову модель, запускає тренування через Ultralytics і зберігає детальні логи виконання.</p>
+    </div>
+</section>
+
+<section class="grid two">
+    <article class="card">
+        <div class="card-head"><h3>Параметри</h3></div>
+        <form id="trainingForm" class="stack-form">
+            <label>Базова модель</label>
+            <input id="trainModel" class="dark-input" value="yolov8n.pt">
+            <label>Класи через кому</label>
+            <input id="trainClasses" class="dark-input" value="{{ default_classes }}">
+            <label>Епохи</label>
+            <input id="trainEpochs" class="dark-input" type="number" min="1" value="10">
+            <label>Розмір зображення</label>
+            <input id="trainImgsz" class="dark-input" type="number" min="320" step="32" value="640">
+            <button id="trainingSubmit" class="primary-btn" type="submit">Запустити тренування</button>
+        </form>
+    </article>
+
+    <article class="card">
+        <div class="card-head"><h3>Статус</h3></div>
+        <div class="telemetry">
+            <div class="metric"><span>Повідомлення</span><strong id="trainingMessage">Очікування</strong></div>
+            <div class="metric"><span>Run dir</span><strong id="trainingRunDir">—</strong></div>
+            <div class="metric"><span>Старт</span><strong id="trainingStarted">—</strong></div>
+            <div class="metric"><span>Завершення</span><strong id="trainingFinished">—</strong></div>
+            <div class="metric"><span>Train images</span><strong id="trainImagesStat">{{ stats.train_images }}</strong></div>
+            <div class="metric"><span>Val images</span><strong id="valImagesStat">{{ stats.val_images }}</strong></div>
+            <div class="metric"><span>Train labels</span><strong id="trainLabelsStat">{{ stats.train_labels }}</strong></div>
+            <div class="metric"><span>Val labels</span><strong id="valLabelsStat">{{ stats.val_labels }}</strong></div>
+        </div>
+    </article>
+</section>
+
+<section class="grid two training-debug-grid">
+    <article class="card">
+        <div class="card-head"><h3>Логи виконання</h3></div>
+        <div id="trainingLogs" class="log-console">Логи ще не зʼявились.</div>
+    </article>
+
+    <article class="card">
+        <div class="card-head"><h3>Історія запусків</h3></div>
+        <div id="trainingHistory" class="history-list">Історія порожня.</div>
+    </article>
+</section>
+
+<section class="grid two training-debug-grid">
+    <article class="card">
+        <div class="card-head"><h3>stdout tail</h3></div>
+        <pre id="trainingStdout" class="log-console prewrap">Порожньо</pre>
+    </article>
+    <article class="card">
+        <div class="card-head"><h3>stderr tail</h3></div>
+        <pre id="trainingStderr" class="log-console prewrap">Порожньо</pre>
+    </article>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+const trainingMessage = document.getElementById('trainingMessage');
+const trainingRunDir = document.getElementById('trainingRunDir');
+const trainingStarted = document.getElementById('trainingStarted');
+const trainingFinished = document.getElementById('trainingFinished');
+const trainingLogs = document.getElementById('trainingLogs');
+const trainingHistory = document.getElementById('trainingHistory');
+const trainingStdout = document.getElementById('trainingStdout');
+const trainingStderr = document.getElementById('trainingStderr');
+const trainingSubmit = document.getElementById('trainingSubmit');
+const trainImagesStat = document.getElementById('trainImagesStat');
+const valImagesStat = document.getElementById('valImagesStat');
+const trainLabelsStat = document.getElementById('trainLabelsStat');
+const valLabelsStat = document.getElementById('valLabelsStat');
+
+function renderHistory(items) {
+    if (!items || !items.length) {
+        trainingHistory.innerHTML = 'Історія порожня.';
+        return;
+    }
+    trainingHistory.innerHTML = items.slice().reverse().map(item => `
+        <div class="history-item">
+            <div><strong>${item.status || '—'}</strong></div>
+            <div>${item.finished_at || '—'}</div>
+            <div>${item.message || '—'}</div>
+            <div>${item.run_dir || '—'}</div>
+        </div>
+    `).join('');
+}
+
+function renderLogs(items) {
+    if (!items || !items.length) {
+        trainingLogs.textContent = 'Логи ще не зʼявились.';
+        return;
+    }
+    trainingLogs.textContent = items.join('\n');
+    trainingLogs.scrollTop = trainingLogs.scrollHeight;
+}
+
+function updateStats(stats) {
+    if (!stats) return;
+    trainImagesStat.textContent = stats.train_images ?? 0;
+    valImagesStat.textContent = stats.val_images ?? 0;
+    trainLabelsStat.textContent = stats.train_labels ?? 0;
+    valLabelsStat.textContent = stats.val_labels ?? 0;
+}
+
+function updateTrainingUi(data) {
+    trainingMessage.textContent = data.message || '—';
+    trainingRunDir.textContent = data.run_dir || '—';
+    trainingStarted.textContent = data.last_started_at || '—';
+    trainingFinished.textContent = data.last_finished_at || '—';
+    trainingSubmit.disabled = !!data.running;
+    trainingSubmit.textContent = data.running ? 'Тренування виконується…' : 'Запустити тренування';
+    renderLogs(data.logs || []);
+    renderHistory(data.history || []);
+    trainingStdout.textContent = data.stdout_tail || 'Порожньо';
+    trainingStderr.textContent = data.stderr_tail || 'Порожньо';
+    updateStats(data.dataset_stats || {});
+}
+
+document.getElementById('trainingForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = {
+        model: document.getElementById('trainModel').value.trim(),
+        classes: document.getElementById('trainClasses').value.split(',').map(v => v.trim()).filter(Boolean),
+        epochs: Number(document.getElementById('trainEpochs').value),
+        imgsz: Number(document.getElementById('trainImgsz').value),
+    };
+    trainingSubmit.disabled = true;
+    trainingMessage.textContent = 'Надсилаю запит на запуск…';
+
+    try {
+        const response = await fetch('/api/training/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            trainingMessage.textContent = data.error || 'Не вдалося запустити тренування';
+        } else {
+            trainingMessage.textContent = data.message || 'Тренування запущено';
+        }
+        await refreshTraining();
+    } catch (error) {
+        trainingMessage.textContent = error.message || String(error);
+        trainingSubmit.disabled = false;
+    }
+});
+
+async function refreshTraining() {
+    const response = await fetch('/api/training/status');
+    const data = await response.json();
+    updateTrainingUi(data);
+}
+
+refreshTraining();
+setInterval(refreshTraining, 2500);
+</script>
+{% endblock %}

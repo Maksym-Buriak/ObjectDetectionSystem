@@ -1,0 +1,17 @@
+# Налаштування середовища розробки
+.idea/
+
+.venv/
+venv/
+env/
+
+# Кеш Python
+__pycache__/
+*.pyc
+
+# Ваги нейромереж (YOLO тощо)
+*.pt
+*.onnx
+
+server/storage/frames/*
+!server/storage/frames/.gitkeep

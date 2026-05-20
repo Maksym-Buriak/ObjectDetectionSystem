@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Розмітка{% endblock %}
+{% block content %}
+<section class="hero">
+    <div>
+        <span class="eyebrow">Розмітка датасету</span>
+        <h2>Редактор класів і bounding boxes</h2>
+        <p>Завантажуй зображення, керуй класами через кнопки-мітки, обирай активний клас одним кліком і зберігай розмітку у форматі YOLO без ручного введення назв у поля.</p>
+    </div>
+</section>
+
+<section class="annotator-layout">
+    <article class="card">
+        <div class="card-head"><h3>Файли зображень</h3></div>
+        <p class="section-note">Можна додавати нові файли, швидко перемикатися між ними та видаляти непотрібні разом із відповідними labels.</p>
+        <form id="uploadForm" class="stack-form">
+            <div class="upload-toolbar">
+                <input type="file" id="uploadFile" accept="image/*">
+                <button class="primary-btn" type="submit">Завантажити зображення</button>
+            </div>
+            <div class="file-actions actions-row">
+                <button class="danger-btn" type="button" onclick="deleteSelectedImage()">Видалити вибраний файл</button>
+            </div>
+        </form>
+        <div class="split-grid">
+            <div>
+                <label class="select-label">Доступні файли</label>
+                <select id="imageSelector" class="dark-input" size="8">
+                    {% for file in uploads %}
+                    <option value="{{ file.name }}">{{ file.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="telemetry top-stats">
+                <div class="metric"><span>Train images</span><strong id="trainImages">{{ stats.train_images }}</strong></div>
+                <div class="metric"><span>Val images</span><strong id="valImages">{{ stats.val_images }}</strong></div>
+                <div class="metric"><span>Train labels</span><strong id="trainLabels">{{ stats.train_labels }}</strong></div>
+                <div class="metric"><span>Val labels</span><strong id="valLabels">{{ stats.val_labels }}</strong></div>
+            </div>
+        </div>
+    </article>
+
+    <article class="card">
+        <div class="card-head"><h3>Керування класами</h3></div>
+        <div class="class-manager">
+            <p class="section-note">Нижче — всі класи датасету. Натисни на клас, щоб зробити його активним для нової рамки. Хрестик на мітці видаляє клас зі списку.</p>
+            <div class="class-builder">
+                <input id="newClassInput" class="dark-input" placeholder="Наприклад: person, helmet або robot">
+                <button class="primary-btn" type="button" onclick="addClassFromInput()">Додати клас</button>
+            </div>
+            <div id="classChips" class="class-chip-grid"></div>
+            <div class="selected-class-card">
+                <span class="muted">Активний клас для нової розмітки</span>
+                <strong id="selectedClassName">person</strong>
+            </div>
+            <div class="actions-row">
+                <button class="secondary-btn" onclick="clearBoxes()" type="button">Очистити всю розмітку</button>
+                <button class="primary-btn" onclick="saveAnnotation()" type="button">Зберегти YOLO labels</button>
+            </div>
+            <ul class="hint-list">
+                <li>Клік по мітці класу — вибір активного класу.</li>
+                <li>Щоб намалювати рамку, просто виділи об'єкт мишкою на canvas.</li>
+                <li>Після збереження зображення та labels автоматично потрапляють у датасет.</li>
+            </ul>
+        </div>
+        <input id="classNames" type="hidden" value="person,car,bicycle">
+        <input id="currentLabel" type="hidden" value="person">
+    </article>
+</section>
+
+<section class="card">
+    <div class="card-head"><h3>Полотно розмітки</h3></div>
+    <p class="section-note">Виділи прямокутник на зображенні. Назва класу підставиться автоматично з активної мітки.</p>
+    <div class="canvas-wrap">
+        <canvas id="annotatorCanvas"></canvas>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card-head"><h3>Поточні bounding boxes</h3></div>
+    <div id="boxesList" class="list-block"></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/annotator.js') }}"></script>
+{% endblock %}

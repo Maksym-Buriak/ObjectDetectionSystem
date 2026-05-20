@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Статус робота{% endblock %}
+{% block content %}
+<section class="hero">
+    <div>
+        <span class="eyebrow">Robot Client</span>
+        <h2>Телеметрія клієнта</h2>
+        <p>Окремий клієнт працює як програмне забезпечення робота: зчитує кадри з камери і передає їх на сервер.</p>
+    </div>
+</section>
+
+<section class="grid two">
+    <article class="card">
+        <div class="card-head"><h3>Остання команда</h3><span id="clientConnected" class="pill">offline</span></div>
+        <div class="telemetry">
+            <div class="metric"><span>Камера</span><strong id="cameraName">—</strong></div>
+            <div class="metric"><span>Команда</span><strong id="lastCommand">—</strong></div>
+            <div class="metric"><span>Ціль</span><strong id="lastTarget">—</strong></div>
+            <div class="metric"><span>Останній зв'язок</span><strong id="lastSeen">—</strong></div>
+        </div>
+    </article>
+    <article class="card">
+        <div class="card-head"><h3>Поточний render</h3></div>
+        <div class="frame-wrap">
+            <img id="robotFrame" class="frame-view" alt="rendered frame">
+        </div>
+    </article>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+async function refreshRobotStatus() {
+    const response = await fetch('/api/system/status');
+    const data = await response.json();
+    const client = data.latest_client_status || {};
+    const result = data.latest_result || {};
+
+    document.getElementById('clientConnected').textContent = client.connected ? 'online' : 'offline';
+    document.getElementById('clientConnected').className = `pill ${client.connected ? 'online' : 'danger'}`;
+    document.getElementById('cameraName').textContent = client.camera || '—';
+    document.getElementById('lastCommand').textContent = client.last_command || '—';
+    document.getElementById('lastTarget').textContent = client.target ? client.target.label : '—';
+    document.getElementById('lastSeen').textContent = client.last_seen ? new Date(client.last_seen * 1000).toLocaleTimeString() : '—';
+    document.getElementById('robotFrame').src = result.rendered_frame_url ? `${result.rendered_frame_url}?t=${Date.now()}` : '';
+}
+refreshRobotStatus();
+setInterval(refreshRobotStatus, 2000);
+</script>
+{% endblock %}

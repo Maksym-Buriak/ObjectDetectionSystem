@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="uk">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Robot Vision Control{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+<div class="app-shell">
+    <aside class="sidebar">
+        <div class="brand">
+            <div class="brand-mark">RV</div>
+            <div>
+                <h1>Robot Vision</h1>
+                <p>Control Suite</p>
+            </div>
+        </div>
+        <nav class="nav">
+            <a href="{{ url_for('index') }}">Операторська панель</a>
+            <a href="{{ url_for('robot_client') }}">Статус робота</a>
+            <a href="{{ url_for('annotator') }}">Розмітка</a>
+            <a href="{{ url_for('training') }}">Донавчання</a>
+        </nav>
+        <div class="sidebar-card">
+            <span class="pill online">YOLO Server</span>
+            <p>Сервер приймає відео, виконує детекцію і формує координати та команду керування.</p>
+        </div>
+    </aside>
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+</div>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
