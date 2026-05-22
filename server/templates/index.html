@@ -5,10 +5,10 @@
     <div>
         <span class="eyebrow">Операторська панель</span>
         <h2>Сучасний центр керування роботом</h2>
-        <p>Сервер отримує кадри, автоматично підвантажує YOLO, виконує виявлення цілі та повертає команду керування. Оператор може вручну вибрати потрібний об'єкт кліком по кадру.</p>
+        <p>Сервер отримує кадри через WebSocket, автоматично підвантажує YOLO, виконує виявлення цілі та повертає команду керування. Оператор може вручну вибрати потрібний об'єкт кліком по кадру.</p>
     </div>
     <div class="hero-actions actions-row">
-        <button class="primary-btn" onclick="refreshDashboard()">Оновити стан</button>
+        <button class="primary-btn" onclick="refreshDatasetStats()">Оновити статистику</button>
         <button class="secondary-btn" onclick="clearManualTarget()">Скинути вибір цілі</button>
     </div>
 </section>
@@ -21,7 +21,7 @@
         </div>
         <p class="muted">Клікни по розпізнаному об'єкту на кадрі, щоб зафіксувати ціль для подальшого супроводу.</p>
         <div class="frame-wrap selectable-frame-wrap">
-            <img id="latestFrame" class="frame-view selectable-frame" alt="frame">
+            <img id="latestFrame" class="frame-view selectable-frame" alt="Очікування підключення камери...">
         </div>
     </article>
 
@@ -34,7 +34,7 @@
             <div class="metric"><span>Причина</span><strong id="commandReason">Очікування даних</strong></div>
             <div class="metric"><span>Центр цілі</span><strong id="targetCenter">—</strong></div>
             <div class="metric"><span>Відхилення</span><strong id="targetOffset">—</strong></div>
-            <div class="metric"><span>Останній клієнт</span><strong id="clientCamera">—</strong></div>
+            <div class="metric"><span>Джерело відео</span><strong id="clientCamera" style="color: #4CAF50;">—</strong></div>
             <div class="metric emphasis"><span>Ручний супровід</span><strong id="manualTargetState">Автовибір цілі</strong></div>
         </div>
     </article>
@@ -68,9 +68,74 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
 <script>
 let latestResult = {};
 let currentFrameMeta = { width: 0, height: 0 };
+
+const socket = io();
+
+socket.on('connect', () => {
+    console.log('Підключено до сервера WebSocket');
+});
+
+socket.on('disconnect', () => {
+    console.log('Відключено від сервера WebSocket');
+});
+
+socket.on('dashboard_update', (data) => {
+    if (data.success !== undefined) {
+        updateDashboardVisuals(data);
+    } else if (data.manual_target !== undefined) {
+        updateManualTargetView(data.manual_target);
+        if (data.source) {
+            document.getElementById('clientCamera').textContent = data.source;
+        }
+    }
+});
+
+function updateDashboardVisuals(result) {
+    latestResult = result;
+    currentFrameMeta = result.frame_size || {width: 0, height: 0};
+    const control = result.control || {};
+    const manualTarget = result.manual_target || {};
+
+    if (result.rendered_frame) {
+        document.getElementById('latestFrame').src = result.rendered_frame;
+    }
+
+    document.getElementById('serverModel').textContent = `model: ${result.model || 'yolov8n.pt'}`;
+    document.getElementById('commandBadge').textContent = control.command || 'WAIT';
+    document.getElementById('commandReason').textContent = control.reason || 'Дані відсутні';
+    document.getElementById('targetCenter').textContent = control.target_center ? control.target_center.join(', ') : '—';
+    document.getElementById('targetOffset').textContent = control.offset ? control.offset.join(', ') : '—';
+
+    if (result.source) {
+        document.getElementById('clientCamera').textContent = result.source;
+    }
+
+    updateManualTargetView(manualTarget);
+
+    const list = document.getElementById('detectionsList');
+    list.innerHTML = '';
+    const detections = result.detections || [];
+    if (!detections.length) {
+        list.innerHTML = '<p class="muted">Ще немає детекцій.</p>';
+        return;
+    }
+    detections.forEach(det => {
+        const item = document.createElement('div');
+        item.className = 'list-item';
+        const isManual = manualTarget.active && Array.isArray(manualTarget.last_box) && JSON.stringify(manualTarget.last_box) === JSON.stringify(det.box);
+        item.innerHTML = `<div class="list-main"><strong>${det.label}</strong><span>conf ${det.confidence}</span><span>center ${det.center.join(', ')}</span></div>`;
+        const actionButton = document.createElement('button');
+        actionButton.className = isManual ? 'primary-btn compact-btn' : 'secondary-btn compact-btn';
+        actionButton.textContent = isManual ? 'Зафіксовано' : 'Обрати';
+        actionButton.onclick = () => selectDetectionCenter(det.center);
+        item.appendChild(actionButton);
+        list.appendChild(item);
+    });
+}
 
 function updateManualTargetView(manualTarget) {
     const state = document.getElementById('manualTargetState');
@@ -94,12 +159,10 @@ async function selectDetectionByPoint(x, y) {
         alert(data.error || 'Не вдалося вибрати ціль');
         return;
     }
-    await refreshDashboard();
 }
 
 async function clearManualTarget() {
     await fetch('/api/target/clear', {method: 'POST'});
-    await refreshDashboard();
 }
 
 async function selectDetectionCenter(center) {
@@ -115,10 +178,7 @@ function imageClickToFrameCoordinates(event) {
     const imageAspect = image.naturalWidth / image.naturalHeight;
     const rectAspect = rect.width / rect.height;
 
-    let drawWidth;
-    let drawHeight;
-    let offsetX;
-    let offsetY;
+    let drawWidth, drawHeight, offsetX, offsetY;
 
     if (rectAspect > imageAspect) {
         drawHeight = rect.height;
@@ -142,51 +202,15 @@ function imageClickToFrameCoordinates(event) {
     };
 }
 
-async function refreshDashboard() {
+async function refreshDatasetStats() {
     const response = await fetch('/api/system/status');
     const data = await response.json();
-    const result = data.latest_result || {};
-    const control = result.control || {};
-    const client = data.latest_client_status || {};
     const stats = data.dataset_stats || {};
-    const manualTarget = data.manual_target || result.manual_target || {};
-
-    latestResult = result;
-    currentFrameMeta = result.frame_size || {width: 0, height: 0};
-
-    document.getElementById('latestFrame').src = result.rendered_frame_url ? `${result.rendered_frame_url}?t=${Date.now()}` : '';
-    document.getElementById('serverModel').textContent = `model: ${result.model || 'yolov8n.pt'}`;
-    document.getElementById('commandBadge').textContent = control.command || 'WAIT';
-    document.getElementById('commandReason').textContent = control.reason || 'Дані відсутні';
-    document.getElementById('targetCenter').textContent = control.target_center ? control.target_center.join(', ') : '—';
-    document.getElementById('targetOffset').textContent = control.offset ? control.offset.join(', ') : '—';
-    document.getElementById('clientCamera').textContent = client.camera || '—';
-    updateManualTargetView(manualTarget);
 
     document.getElementById('trainImages').textContent = stats.train_images ?? 0;
     document.getElementById('valImages').textContent = stats.val_images ?? 0;
     document.getElementById('trainLabels').textContent = stats.train_labels ?? 0;
     document.getElementById('valLabels').textContent = stats.val_labels ?? 0;
-
-    const list = document.getElementById('detectionsList');
-    list.innerHTML = '';
-    const detections = result.detections || [];
-    if (!detections.length) {
-        list.innerHTML = '<p class="muted">Ще немає детекцій.</p>';
-        return;
-    }
-    detections.forEach(det => {
-        const item = document.createElement('div');
-        item.className = 'list-item';
-        const isManual = manualTarget.active && Array.isArray(manualTarget.last_box) && JSON.stringify(manualTarget.last_box) === JSON.stringify(det.box);
-        item.innerHTML = `<div class="list-main"><strong>${det.label}</strong><span>conf ${det.confidence}</span><span>center ${det.center.join(', ')}</span></div>`;
-        const actionButton = document.createElement('button');
-        actionButton.className = isManual ? 'primary-btn compact-btn' : 'secondary-btn compact-btn';
-        actionButton.textContent = isManual ? 'Зафіксовано' : 'Обрати';
-        actionButton.onclick = () => selectDetectionCenter(det.center);
-        item.appendChild(actionButton);
-        list.appendChild(item);
-    });
 }
 
 document.getElementById('latestFrame').addEventListener('click', async (event) => {
@@ -195,8 +219,10 @@ document.getElementById('latestFrame').addEventListener('click', async (event) =
     await selectDetectionByPoint(point.x, point.y);
 });
 
-refreshDashboard();
-setInterval(refreshDashboard, 2000);
+refreshDatasetStats();
+setInterval(refreshDatasetStats, 5000);
+
 window.clearManualTarget = clearManualTarget;
+window.refreshDatasetStats = refreshDatasetStats;
 </script>
 {% endblock %}

@@ -1,81 +1,148 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import sys
+import threading
 import time
+from pathlib import Path
 
 import cv2
-import requests
+import socketio
 
+# --- Налаштування шляхів ---
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Robot video client")
-    parser.add_argument("--server", default="http://127.0.0.1:5000", help="Base URL сервера")
-    parser.add_argument("--camera", default="0", help="Індекс камери або шлях до відеофайлу")
-    parser.add_argument("--interval", type=float, default=0.2, help="Інтервал між відправками кадрів")
-    parser.add_argument("--width", type=int, default=960)
-    parser.add_argument("--height", type=int, default=540)
-    parser.add_argument("--show", action="store_true", help="Показувати локальне вікно")
-    args = parser.parse_args()
+# --- Глобальні змінні ---
+sio = socketio.Client()
+last_control_command = {}
+is_running = True
 
-    camera_source = int(args.camera) if str(args.camera).isdigit() else args.camera
-    cap = cv2.VideoCapture(camera_source)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
+# --- Обробники подій Socket.IO ---
+@sio.on("connect")
+def on_connect():
+    print("Підключено до сервера WebSocket.")
 
+@sio.on("disconnect")
+def on_disconnect():
+    """Ця функція викликається, коли зв'язок з сервером втрачено."""
+    global is_running
+    if is_running:
+        print("Відключено від сервера WebSocket. Завершення роботи клієнта...")
+        is_running = False
+
+@sio.on("dashboard_update")
+def on_dashboard_update(data):
+    global last_control_command
+    if "control" in data:
+        last_control_command = data["control"]
+
+# --- Основна логіка клієнта ---
+def send_frames(camera_index: int, show_window: bool, fps: int):
+    global is_running
+    cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
-        raise RuntimeError("Не вдалося відкрити джерело відео")
+        print(f"Помилка: не вдалося відкрити камеру {camera_index}")
+        is_running = False
+        return
 
-    session = requests.Session()
-    last_send = 0.0
+    window_name = "Robot Camera"
+    if show_window:
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
-    print(f"[CLIENT] Підключено до {args.server}")
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            print("[CLIENT] Не вдалося отримати кадр")
+    frame_interval = 1.0 / fps
+
+    while is_running:
+        start_time = time.time()
+        
+        if not sio.connected:
+            is_running = False
             break
+            
+        ret, frame = cap.read()
+        if not ret:
+            print("Помилка: не вдалося отримати кадр.")
+            time.sleep(0.5)
+            continue
 
-        now = time.time()
-        result = None
-
-        if now - last_send >= args.interval:
-            ok_encode, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
-            if ok_encode:
-                files = {"frame": ("frame.jpg", encoded.tobytes(), "image/jpeg")}
-                try:
-                    response = session.post(f"{args.server}/api/vision/frame", files=files, timeout=30)
-                    response.raise_for_status()
-                    result = response.json()
-
-                    client_status = {
-                        "connected": True,
-                        "last_seen": now,
-                        "camera": str(camera_source),
-                        "last_command": result.get("control", {}).get("command"),
-                        "target": result.get("target"),
-                    }
-                    session.post(f"{args.server}/api/client/status", json=client_status, timeout=5)
-                except Exception as exc:
-                    print(f"[CLIENT] Помилка запиту: {exc}")
-            last_send = now
-
-        if result:
-            command = result.get("control", {}).get("command")
-            reason = result.get("control", {}).get("reason")
-            target = result.get("target")
-            print(f"[CLIENT] command={command} | reason={reason} | target={target.get('label') if target else '-'}")
-
-        if args.show:
-            display = frame.copy()
-            cv2.putText(display, "Robot camera", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
-            cv2.imshow("Robot Client", display)
-            key = cv2.waitKey(1) & 0xFF
-            if key in (27, ord("q")):
+        if sio.connected:
+            try:
+                _, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                frame_b64 = base64.b64encode(buffer).decode('utf-8')
+                sio.emit("video_frame", {"frame": f"data:image/jpeg;base64,{frame_b64}", "source": "Webcam"})
+            except Exception:
+                is_running = False
                 break
 
-    cap.release()
-    cv2.destroyAllWindows()
+        if show_window:
+            display_frame = frame.copy()
+            cmd = last_control_command.get("command", "WAIT")
+            reason = last_control_command.get("reason", "")
+            cv2.putText(display_frame, f"CMD: {cmd}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            if reason:
+                cv2.putText(display_frame, reason, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            
+            cv2.imshow(window_name, display_frame)
+            # Перевіряємо і натискання 'q', і стан is_running
+            if cv2.waitKey(1) & 0xFF == ord('q') or not is_running:
+                break
+        
+        elapsed_time = time.time() - start_time
+        sleep_time = frame_interval - elapsed_time
+        if sleep_time > 0:
+            # Використовуємо sio.sleep для неблокуючої затримки
+            sio.sleep(sleep_time)
 
+    # --- Блок завершення роботи ---
+    print("Звільнення ресурсів...")
+    cap.release()
+    if show_window:
+        cv2.destroyAllWindows()
+        # Додатково викликаємо waitKey кілька разів, щоб OpenCV встиг обробити закриття вікна
+        for _ in range(5):
+            cv2.waitKey(1)
+            
+    if sio.connected:
+        sio.disconnect()
+    print("Камеру звільнено, вікна закрито.")
+
+def main():
+    global is_running
+    parser = argparse.ArgumentParser(description="Клієнт для робота, що транслює відео на сервер.")
+    parser.add_argument("--host", default="127.0.0.1", help="IP-адреса сервера.")
+    parser.add_argument("--port", default=5000, type=int, help="Порт сервера.")
+    parser.add_argument("--camera", default=0, type=int, help="Індекс камери для захоплення відео.")
+    parser.add_argument("--show", action="store_true", help="Показувати вікно з відео.")
+    parser.add_argument("--fps", default=15, type=int, help="Кількість кадрів в секунду для відправки.")
+    args = parser.parse_args()
+
+    server_url = f"http://{args.host}:{args.port}"
+    
+    try:
+        sio.connect(server_url, wait_timeout=5)
+    except socketio.exceptions.ConnectionError as e:
+        print(f"Не вдалося підключитися до WebSocket: {e}")
+        return
+
+    if not sio.connected:
+        print("Не вдалося встановити з'єднання.")
+        return
+
+    frame_thread = threading.Thread(target=send_frames, args=(args.camera, args.show, args.fps))
+    frame_thread.start()
+    
+    try:
+        while is_running and frame_thread.is_alive():
+            frame_thread.join(timeout=0.1)
+    except KeyboardInterrupt:
+        print("\nОтримано сигнал Ctrl+C. Завершення роботи...")
+        is_running = False
+    
+    if frame_thread.is_alive():
+        frame_thread.join()
+    print("Програму повністю закрито.")
 
 if __name__ == "__main__":
     main()
