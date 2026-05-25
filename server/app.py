@@ -6,6 +6,8 @@ import math
 import sys
 import threading
 import time
+import subprocess
+import json
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -18,6 +20,8 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_socketio import SocketIO
 from PIL import Image
 from werkzeug.utils import secure_filename
+import firebase_admin
+from firebase_admin import credentials, db
 
 from common.constants import DEFAULT_CLASSES
 from server.services.control_logic import build_command, choose_target
@@ -26,6 +30,19 @@ from server.services.model_manager import VisionEngine
 from server.services.state import SystemState
 from server.services.training_manager import TrainingManager
 from server.utils.config import STORAGE_DIR
+
+# --- Функція для завантаження конфігурації ---
+def load_config():
+    """Завантажує конфігурацію з JSON файлу."""
+    config_path = ROOT_DIR / "server" / "config.json"
+    if not config_path.exists():
+        return {} # Повертаємо порожній словник, якщо файлу немає, щоб не крашити сервер, якщо Firebase не потрібен
+    try:
+        with open(config_path, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Помилка читання config.json: {e}")
+        return {}
 
 # --- Налаштування додатку та SocketIO ---
 app = Flask(__name__)
@@ -38,6 +55,11 @@ vision = VisionEngine()
 dataset_manager = DatasetManager()
 training_manager = TrainingManager(state, dataset_manager)
 
+# --- Налаштування Firebase ---
+config = load_config()
+FIREBASE_CERT_PATH = ROOT_DIR / "server" / "serviceAccountKey.json"
+FIREBASE_DB_URL = config.get("firebase_db_url")
+FIREBASE_ENABLED = FIREBASE_CERT_PATH.exists() and FIREBASE_DB_URL
 
 # --- Клас для керування останнім кадром (вирішення проблеми затримки) ---
 class FrameHandler:
@@ -286,9 +308,68 @@ def api_training_status():
     status["dataset_stats"] = dataset_manager.get_dataset_stats()
     return jsonify(status)
 
+# --- Функції для роботи з Tailscale та Firebase ---
+
+def get_tailscale_ip():
+    """Отримує IP-адресу Tailscale через командний рядок."""
+    commands = [
+        ["tailscale", "ip", "-4"],
+        [r"E:\programming\Tailscale\tailscale.exe", "ip", "-4"],
+        [r"C:\Program Files\Tailscale\tailscale.exe", "ip", "-4"]
+    ]
+    
+    for cmd in commands:
+        try:
+            result = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+            ip = result.decode('utf-8').strip()
+            if '\n' in ip:
+                ip = ip.split('\n')[0].strip()
+            return ip
+        except Exception:
+            continue
+    return None
+
+def update_firebase_status(status, port=5000):
+    """Оновлює статус та адресу сервера у Firebase."""
+    if not FIREBASE_ENABLED:
+        return
+
+    try:
+        if not firebase_admin._apps:
+            cred = credentials.Certificate(str(FIREBASE_CERT_PATH))
+            firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
+
+        ref = db.reference('/server')
+        
+        if status == 'online':
+            ts_ip = get_tailscale_ip()
+            if ts_ip:
+                server_url = f"ws://{ts_ip}:{port}"
+                ref.set({
+                    'address': server_url,
+                    'last_seen': time.time(),
+                    'status': 'online'
+                })
+                print(f"✅ Firebase: Опубліковано адресу {server_url}")
+            else:
+                print("⚠️ Firebase: Не вдалося отримати Tailscale IP, але сервер запускається.")
+        else:
+            ref.update({'status': 'offline'})
+            print("✅ Firebase: Статус змінено на offline")
+            
+    except Exception as e:
+        print(f"❌ Помилка роботи з Firebase: {e}")
 
 if __name__ == "__main__":
     # Запускаємо фоновий потік для обробки кадрів
     socketio.start_background_task(target=frame_processing_loop)
-    # Запускаємо сервер
-    socketio.run(app, debug=True, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
+    
+    # Оновлюємо статус у Firebase на 'online'
+    update_firebase_status('online')
+    
+    try:
+        # Запускаємо сервер (з use_reloader=False, щоб уникнути подвійного виконання)
+        socketio.run(app, debug=True, use_reloader=False, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
+    finally:
+        # Оновлюємо статус у Firebase на 'offline' при завершенні (наприклад, через Ctrl+C)
+        update_firebase_status('offline')

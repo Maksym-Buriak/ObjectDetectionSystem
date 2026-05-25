@@ -13,5 +13,10 @@ __pycache__/
 *.pt
 *.onnx
 
+# Згенеровані кадри
 server/storage/frames/*
 !server/storage/frames/.gitkeep
+
+# Секрети та конфігурація
+server/serviceAccountKey.json
+server/config.json
