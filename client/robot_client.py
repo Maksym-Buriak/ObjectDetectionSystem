@@ -5,6 +5,7 @@ import base64
 import sys
 import threading
 import time
+import socket
 from pathlib import Path
 
 import cv2
@@ -19,11 +20,12 @@ if str(ROOT_DIR) not in sys.path:
 sio = socketio.Client()
 last_control_command = {}
 is_running = True
+DEVICE_ID = f"robot_pc_{socket.gethostname()}" # Унікальний ID поточного клієнта
 
 # --- Обробники подій Socket.IO ---
 @sio.on("connect")
 def on_connect():
-    print("Підключено до сервера WebSocket.")
+    print(f"Підключено до сервера WebSocket. Мій ID: {DEVICE_ID}")
 
 @sio.on("disconnect")
 def on_disconnect():
@@ -33,14 +35,14 @@ def on_disconnect():
         print("Відключено від сервера WebSocket. Завершення роботи клієнта...")
         is_running = False
 
-@sio.on("dashboard_update")
-def on_dashboard_update(data):
+@sio.on("control_response")
+def on_control_response(data):
     global last_control_command
     if "control" in data:
         last_control_command = data["control"]
 
 # --- Основна логіка клієнта ---
-def send_frames(camera_index: int, show_window: bool, fps: int):
+def send_frames(camera_index: int, show_window: bool, fps: int, client_name: str):
     global is_running
     cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
@@ -48,7 +50,7 @@ def send_frames(camera_index: int, show_window: bool, fps: int):
         is_running = False
         return
 
-    window_name = "Robot Camera"
+    window_name = f"Robot Camera ({client_name})"
     if show_window:
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
@@ -71,7 +73,11 @@ def send_frames(camera_index: int, show_window: bool, fps: int):
             try:
                 _, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
                 frame_b64 = base64.b64encode(buffer).decode('utf-8')
-                sio.emit("video_frame", {"frame": f"data:image/jpeg;base64,{frame_b64}", "source": "Webcam"})
+                sio.emit("video_frame", {
+                    "frame": f"data:image/jpeg;base64,{frame_b64}", 
+                    "source": client_name,
+                    "device_id": f"{DEVICE_ID}_cam_{camera_index}"
+                })
             except Exception:
                 is_running = False
                 break
@@ -85,14 +91,12 @@ def send_frames(camera_index: int, show_window: bool, fps: int):
                 cv2.putText(display_frame, reason, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
             
             cv2.imshow(window_name, display_frame)
-            # Перевіряємо і натискання 'q', і стан is_running
             if cv2.waitKey(1) & 0xFF == ord('q') or not is_running:
                 break
         
         elapsed_time = time.time() - start_time
         sleep_time = frame_interval - elapsed_time
         if sleep_time > 0:
-            # Використовуємо sio.sleep для неблокуючої затримки
             sio.sleep(sleep_time)
 
     # --- Блок завершення роботи ---
@@ -100,7 +104,6 @@ def send_frames(camera_index: int, show_window: bool, fps: int):
     cap.release()
     if show_window:
         cv2.destroyAllWindows()
-        # Додатково викликаємо waitKey кілька разів, щоб OpenCV встиг обробити закриття вікна
         for _ in range(5):
             cv2.waitKey(1)
             
@@ -116,6 +119,7 @@ def main():
     parser.add_argument("--camera", default=0, type=int, help="Індекс камери для захоплення відео.")
     parser.add_argument("--show", action="store_true", help="Показувати вікно з відео.")
     parser.add_argument("--fps", default=15, type=int, help="Кількість кадрів в секунду для відправки.")
+    parser.add_argument("--name", default="Laptop Webcam", type=str, help="Зрозуміле ім'я цього пристрою.")
     args = parser.parse_args()
 
     server_url = f"http://{args.host}:{args.port}"
@@ -130,7 +134,7 @@ def main():
         print("Не вдалося встановити з'єднання.")
         return
 
-    frame_thread = threading.Thread(target=send_frames, args=(args.camera, args.show, args.fps))
+    frame_thread = threading.Thread(target=send_frames, args=(args.camera, args.show, args.fps, args.name))
     frame_thread.start()
     
     try:

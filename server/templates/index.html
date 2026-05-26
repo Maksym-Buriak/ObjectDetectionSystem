@@ -19,7 +19,7 @@
             <h3>Останній кадр</h3>
             <span id="serverModel" class="pill">model: yolov8n.pt</span>
         </div>
-        <p class="muted">Натисніть по розпізнаному об'єкту на кадрі, щоб зафіксувати ціль для подальшого супроводу.</p>
+        <p class="muted">Клікни по розпізнаному об'єкту на кадрі, щоб зафіксувати ціль для подальшого супроводу.</p>
         <div class="frame-wrap selectable-frame-wrap">
             <img id="latestFrame" class="frame-view selectable-frame" alt="Очікування підключення камери...">
         </div>
@@ -34,8 +34,16 @@
             <div class="metric"><span>Причина</span><strong id="commandReason">Очікування даних</strong></div>
             <div class="metric"><span>Центр цілі</span><strong id="targetCenter">—</strong></div>
             <div class="metric"><span>Відхилення</span><strong id="targetOffset">—</strong></div>
-            <div class="metric"><span>Джерело відео</span><strong id="clientCamera" style="color: #4CAF50;">—</strong></div>
+            <div class="metric"><span>Поточне відео з</span><strong id="clientCamera" style="color: #4CAF50;">—</strong></div>
             <div class="metric emphasis"><span>Ручний супровід</span><strong id="manualTargetState">Автовибір цілі</strong></div>
+        </div>
+
+        <!-- Новий блок для вибору джерела -->
+        <div class="card-head" style="margin-top: 24px;">
+            <h3>Джерела відео</h3>
+        </div>
+        <div id="sourceList" class="list-block">
+            <p class="muted">Немає підключених джерел.</p>
         </div>
     </article>
 </section>
@@ -82,6 +90,40 @@ socket.on('connect', () => {
 socket.on('disconnect', () => {
     console.log('Відключено від сервера WebSocket');
 });
+
+// --- Нова логіка для оновлення списку джерел ---
+socket.on('available_sources', (sources) => {
+    const sourceList = document.getElementById('sourceList');
+    sourceList.innerHTML = ''; // Очищуємо список
+
+    if (!sources || sources.length === 0) {
+        const p = document.createElement('p');
+        p.className = 'muted';
+        p.textContent = 'Немає підключених джерел.';
+        sourceList.appendChild(p);
+    } else {
+        sources.forEach(source => {
+            const item = document.createElement('div');
+            item.className = 'list-item';
+            item.innerHTML = `<div class="list-main"><strong>${source.name}</strong></div>`;
+
+            const actionButton = document.createElement('button');
+            actionButton.className = source.is_active ? 'primary-btn compact-btn' : 'secondary-btn compact-btn';
+            actionButton.textContent = source.is_active ? 'Активне' : 'Обрати';
+            actionButton.onclick = () => {
+                fetch('/api/sources/select', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ source_id: source.id })
+                });
+            };
+
+            item.appendChild(actionButton);
+            sourceList.appendChild(item);
+        });
+    }
+});
+
 
 socket.on('dashboard_update', (data) => {
     if (data.success !== undefined) {
@@ -211,6 +253,12 @@ async function refreshDatasetStats() {
     document.getElementById('valImages').textContent = stats.val_images ?? 0;
     document.getElementById('trainLabels').textContent = stats.train_labels ?? 0;
     document.getElementById('valLabels').textContent = stats.val_labels ?? 0;
+
+    // Також оновлюємо список джерел під час загального оновлення статусу
+    if (data.active_sources) {
+        // Ми могли б тут оновити UI, але ми вже отримуємо WebSocket подію `available_sources`,
+        // тому тут нічого не робимо, щоб уникнути подвійного рендерингу.
+    }
 }
 
 document.getElementById('latestFrame').addEventListener('click', async (event) => {

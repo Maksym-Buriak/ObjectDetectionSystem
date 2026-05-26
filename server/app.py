@@ -6,8 +6,6 @@ import math
 import sys
 import threading
 import time
-import subprocess
-import json
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -20,8 +18,6 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_socketio import SocketIO
 from PIL import Image
 from werkzeug.utils import secure_filename
-import firebase_admin
-from firebase_admin import credentials, db
 
 from common.constants import DEFAULT_CLASSES
 from server.services.control_logic import build_command, choose_target
@@ -30,19 +26,6 @@ from server.services.model_manager import VisionEngine
 from server.services.state import SystemState
 from server.services.training_manager import TrainingManager
 from server.utils.config import STORAGE_DIR
-
-# --- Функція для завантаження конфігурації ---
-def load_config():
-    """Завантажує конфігурацію з JSON файлу."""
-    config_path = ROOT_DIR / "server" / "config.json"
-    if not config_path.exists():
-        return {} # Повертаємо порожній словник, якщо файлу немає, щоб не крашити сервер, якщо Firebase не потрібен
-    try:
-        with open(config_path, "r") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Помилка читання config.json: {e}")
-        return {}
 
 # --- Налаштування додатку та SocketIO ---
 app = Flask(__name__)
@@ -55,41 +38,79 @@ vision = VisionEngine()
 dataset_manager = DatasetManager()
 training_manager = TrainingManager(state, dataset_manager)
 
-# --- Налаштування Firebase ---
-config = load_config()
-FIREBASE_CERT_PATH = ROOT_DIR / "server" / "serviceAccountKey.json"
-FIREBASE_DB_URL = config.get("firebase_db_url")
-FIREBASE_ENABLED = FIREBASE_CERT_PATH.exists() and FIREBASE_DB_URL
-
-# --- Клас для керування останнім кадром (вирішення проблеми затримки) ---
-class FrameHandler:
+# --- Новий мульти-пристроєвий FrameHandler ---
+class MultiFrameHandler:
     def __init__(self):
-        self.latest_frame = None
-        self.latest_source = None
+        self.frames = {}          # Структура: { source_id: frame_ndarray }
+        self.sources_info = {}    # Структура: { source_id: { "name": str, "last_seen": float, "sid": str } }
+        self.active_source = None # ID джерела, яке ми зараз процесимо та виводимо на Dashboard
         self.lock = threading.Lock()
         self.new_frame_event = threading.Event()
 
-    def set_frame(self, frame: np.ndarray, source: str):
+    def set_frame(self, source_id: str, source_name: str, sid: str, frame: np.ndarray):
         with self.lock:
-            self.latest_frame = frame
-            self.latest_source = source
+            self.frames[source_id] = frame
+            self.sources_info[source_id] = {
+                "name": source_name,
+                "last_seen": time.time(),
+                "sid": sid
+            }
+            # Якщо активне джерело ще не обрано, автоматично ставимо перше підключене
+            if self.active_source is None:
+                self.active_source = source_id
         self.new_frame_event.set()
 
-    def get_frame(self) -> tuple[np.ndarray | None, str | None]:
+    def get_active_frame(self) -> tuple[np.ndarray | None, str | None, str | None]:
+        """Повертає кадр, ID та зрозуміле ім'я поточного АКТИВНОГО пристрою."""
         with self.lock:
-            frame = self.latest_frame
-            source = self.latest_source
-            self.latest_frame = None  # Скидаємо, щоб не обробляти той самий кадр двічі
-            self.latest_source = None
-        return frame, source
+            if self.active_source is None or self.active_source not in self.frames:
+                return None, None, None
+            
+            frame = self.frames.get(self.active_source)
+            
+            # Очищуємо кадр після вичитки, щоб не обробляти статичну картинку в циклі
+            if frame is not None:
+                self.frames[self.active_source] = None
+                
+            source_id = self.active_source
+            source_name = self.sources_info[source_id]["name"]
+            
+        return frame, source_id, source_name
 
-frame_handler = FrameHandler()
+    def clean_dead_sources(self, timeout=5.0):
+        """Видаляє пристрої, від яких давно не було кадрів."""
+        with self.lock:
+            now = time.time()
+            dead_ids = [
+                sid for sid, info in self.sources_info.items() 
+                if now - info["last_seen"] > timeout
+            ]
+            for sid in dead_ids:
+                self.frames.pop(sid, None)
+                self.sources_info.pop(sid, None)
+                if self.active_source == sid:
+                    self.active_source = list(self.sources_info.keys())[0] if self.sources_info else None
 
-# --- Логіка обробки та трансляції кадрів ---
+    def get_available_sources(self) -> list[dict]:
+        with self.lock:
+            return [
+                {"id": sid, "name": info["name"], "is_active": (sid == self.active_source)}
+                for sid, info in self.sources_info.items()
+            ]
 
-def process_frame_and_broadcast(frame: np.ndarray, source: str):
-    """Обробляє кадр, оновлює стан та транслює результат через WebSocket."""
-    state.update_client_status({"camera": source, "timestamp": time.time()})
+    def set_active_source(self, source_id: str) -> bool:
+        with self.lock:
+            if source_id in self.sources_info:
+                self.active_source = source_id
+                return True
+            return False
+
+frame_handler = MultiFrameHandler()
+
+# --- Фонова обробка ---
+
+def process_frame_and_broadcast(frame: np.ndarray, source_id: str, source_name: str):
+    state.update_client_status({"camera": source_name, "timestamp": time.time()})
 
     detections = vision.detect(frame)
     manual_target = state.get_manual_target()
@@ -98,7 +119,6 @@ def process_frame_and_broadcast(frame: np.ndarray, source: str):
 
     rendered_frame = vision.annotate(frame, detections, target)
 
-    # Кодуємо оброблений кадр в JPEG (з якістю 80 для швидкості) і потім в base64
     _, buffer = cv2.imencode('.jpg', rendered_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
     frame_b64 = base64.b64encode(buffer).decode('utf-8')
 
@@ -116,46 +136,66 @@ def process_frame_and_broadcast(frame: np.ndarray, source: str):
         "model": vision.model_name,
         "server_time": time.time(),
         "manual_target": manual_target,
-        "source": source,  # Додаємо джерело кадру
+        "source": source_name,
+        "source_id": source_id
     }
     state.update_result(None, response)
     socketio.emit("dashboard_update", response)
+    
+    # ВІДПРАВКА КОМАНДИ НАЗАД КОНКРЕТНОМУ РОБОТУ/ПРИСТРОЮ
+    with frame_handler.lock:
+        active_info = frame_handler.sources_info.get(source_id)
+        active_sid = active_info["sid"] if active_info else None
+        
+    if active_sid:
+        socketio.emit("control_response", {"control": command_data}, to=active_sid)
 
 def frame_processing_loop():
-    """Фоновий потік, що обробляє кадри з контрольованою швидкістю."""
+    counter = 0
     while True:
-        frame_handler.new_frame_event.wait()  # Чекаємо на сигнал про новий кадр
-        frame, source = frame_handler.get_frame()
-        frame_handler.new_frame_event.clear() # Скидаємо подію
+        frame_handler.new_frame_event.wait(timeout=1.0)
+        frame, src_id, src_name = frame_handler.get_active_frame()
+        frame_handler.new_frame_event.clear()
 
-        if frame is not None and source is not None:
+        if frame is not None and src_id is not None:
             try:
-                process_frame_and_broadcast(frame, source)
+                process_frame_and_broadcast(frame, src_id, src_name)
             except Exception as e:
                 print(f"Помилка у фоновому обробнику кадрів: {e}")
         
-        # Невелика затримка, щоб не перевантажувати CPU, якщо кадри надходять дуже швидко
+        # Раз на 100 ітерацій чистимо "відпалі" пристрої
+        counter += 1
+        if counter % 100 == 0:
+            frame_handler.clean_dead_sources()
+            socketio.emit("available_sources", frame_handler.get_available_sources())
+            
         socketio.sleep(0.01)
-
 
 # --- Обробники WebSocket ---
 
 @socketio.on("connect")
 def handle_connect():
-    print("Веб-клієнт підключився")
+    print(f"Клієнт підключився: {request.sid}")
+    # Відразу відправляємо список пристроїв новому клієнту
+    socketio.emit("available_sources", frame_handler.get_available_sources(), to=request.sid)
 
 @socketio.on("disconnect")
 def handle_disconnect():
-    print("Веб-клієнт від'єднався")
+    print(f"Клієнт відключився: {request.sid}")
 
 @socketio.on("video_frame")
 def handle_video_frame(data):
-    """
-    Обробник для кадрів. Швидко декодує та передає в FrameHandler.
-    """
     try:
-        frame_data = data if isinstance(data, bytes) else data.get("frame")
-        source = "Android" if isinstance(data, bytes) else data.get("source", "Webcam")
+        # Спроба визначити унікальний ID пристрою
+        if isinstance(data, bytes):
+            source_id = f"android_{request.sid}"
+            source_name = "Android Camera"
+            frame_data = data
+        else:
+            device_id = data.get("device_id")
+            source_id = device_id if device_id else f"webcam_{request.sid}"
+            source_name = data.get("source", "Webcam")
+            frame_data = data.get("frame")
 
         if isinstance(frame_data, bytes):
             pil_image = Image.open(io.BytesIO(frame_data))
@@ -172,17 +212,36 @@ def handle_video_frame(data):
         if frame is None:
             return
 
-        # Передаємо кадр в обробник, не чекаючи на його обробку
-        frame_handler.set_frame(frame, source)
+        # Зберігаємо кадр у нашому менеджері
+        frame_handler.set_frame(source_id, source_name, request.sid, frame)
 
     except Exception as e:
         print(f"Помилка декодування WebSocket кадру: {e}")
 
+# --- Нові API ендпоінти для фронтенду ---
 
-# --- HTTP ендпоінти ---
+@app.route("/api/sources", methods=["GET"])
+def get_sources():
+    """Повертає список усіх підключених зараз пристроїв-камер."""
+    return jsonify({"success": True, "sources": frame_handler.get_available_sources()})
+
+@app.route("/api/sources/select", methods=["POST"])
+def select_source():
+    """Ендпоінт для перемикання активної камери з фронтенду."""
+    data = request.get_json(force=True) or {}
+    source_id = data.get("source_id")
+    if not source_id:
+        return jsonify({"success": False, "error": "Не вказано source_id"}), 400
+        
+    if frame_handler.set_active_source(source_id):
+        # Оповіщаємо всі інтерфейси про зміну активного стримера
+        socketio.emit("available_sources", frame_handler.get_available_sources())
+        return jsonify({"success": True, "active_source": source_id})
+    return jsonify({"success": False, "error": "Пристрій не знайдено або відключено"}), 404
+
+# --- Інші HTTP ендпоінти ---
 
 def find_detection_for_click(detections: list[dict], x: int, y: int) -> dict | None:
-    # ... (код без змін)
     inside = []
     for det in detections:
         box = det.get("box") or []
@@ -229,6 +288,8 @@ def api_system_status():
     snapshot = state.get_snapshot()
     snapshot["dataset_stats"] = dataset_manager.get_dataset_stats()
     snapshot["uploads"] = dataset_manager.list_uploads()[:20]
+    # Додаємо список пристроїв до загального статусу
+    snapshot["active_sources"] = frame_handler.get_available_sources()
     return jsonify(snapshot)
 
 @app.route("/api/model/load", methods=["POST"])
@@ -257,7 +318,6 @@ def api_target_clear():
     socketio.emit("dashboard_update", {"manual_target": state.get_manual_target(), "source": state.get_snapshot().get("latest_client_status", {}).get("camera")})
     return jsonify({"success": True, "manual_target": state.get_manual_target()})
 
-# ... (решта ендпоінтів для анотатора та тренування без змін)
 @app.route("/api/annotator/upload", methods=["POST"])
 def api_annotator_upload():
     if "file" not in request.files: return jsonify({"success": False, "error": "Файл не передано"}), 400
@@ -308,68 +368,6 @@ def api_training_status():
     status["dataset_stats"] = dataset_manager.get_dataset_stats()
     return jsonify(status)
 
-# --- Функції для роботи з Tailscale та Firebase ---
-
-def get_tailscale_ip():
-    """Отримує IP-адресу Tailscale через командний рядок."""
-    commands = [
-        ["tailscale", "ip", "-4"],
-        [r"E:\programming\Tailscale\tailscale.exe", "ip", "-4"],
-        [r"C:\Program Files\Tailscale\tailscale.exe", "ip", "-4"]
-    ]
-    
-    for cmd in commands:
-        try:
-            result = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
-            ip = result.decode('utf-8').strip()
-            if '\n' in ip:
-                ip = ip.split('\n')[0].strip()
-            return ip
-        except Exception:
-            continue
-    return None
-
-def update_firebase_status(status, port=5000):
-    """Оновлює статус та адресу сервера у Firebase."""
-    if not FIREBASE_ENABLED:
-        return
-
-    try:
-        if not firebase_admin._apps:
-            cred = credentials.Certificate(str(FIREBASE_CERT_PATH))
-            firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
-
-        ref = db.reference('/server')
-        
-        if status == 'online':
-            ts_ip = get_tailscale_ip()
-            if ts_ip:
-                server_url = f"ws://{ts_ip}:{port}"
-                ref.set({
-                    'address': server_url,
-                    'last_seen': time.time(),
-                    'status': 'online'
-                })
-                print(f"✅ Firebase: Опубліковано адресу {server_url}")
-            else:
-                print("⚠️ Firebase: Не вдалося отримати Tailscale IP, але сервер запускається.")
-        else:
-            ref.update({'status': 'offline'})
-            print("✅ Firebase: Статус змінено на offline")
-            
-    except Exception as e:
-        print(f"❌ Помилка роботи з Firebase: {e}")
-
 if __name__ == "__main__":
-    # Запускаємо фоновий потік для обробки кадрів
     socketio.start_background_task(target=frame_processing_loop)
-    
-    # Оновлюємо статус у Firebase на 'online'
-    update_firebase_status('online')
-    
-    try:
-        # Запускаємо сервер (з use_reloader=False, щоб уникнути подвійного виконання)
-        socketio.run(app, debug=True, use_reloader=False, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
-    finally:
-        # Оновлюємо статус у Firebase на 'offline' при завершенні (наприклад, через Ctrl+C)
-        update_firebase_status('offline')
+    socketio.run(app, debug=True, host="0.0.0.0", port=5000)
