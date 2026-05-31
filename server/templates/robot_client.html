@@ -11,7 +11,7 @@
 
 <section class="grid two">
     <article class="card">
-        <div class="card-head"><h3>Остання команда</h3><span id="clientConnected" class="pill">offline</span></div>
+        <div class="card-head"><h3>Остання команда</h3><span id="clientConnected" class="pill danger">offline</span></div>
         <div class="telemetry">
             <div class="metric"><span>Камера</span><strong id="cameraName">—</strong></div>
             <div class="metric"><span>Команда</span><strong id="lastCommand">—</strong></div>
@@ -28,22 +28,62 @@
 </section>
 {% endblock %}
 {% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
 <script>
-async function refreshRobotStatus() {
-    const response = await fetch('/api/system/status');
-    const data = await response.json();
-    const client = data.latest_client_status || {};
-    const result = data.latest_result || {};
+    const socket = io();
+    let offlineTimeout;
 
-    document.getElementById('clientConnected').textContent = client.connected ? 'online' : 'offline';
-    document.getElementById('clientConnected').className = `pill ${client.connected ? 'online' : 'danger'}`;
-    document.getElementById('cameraName').textContent = client.camera || '—';
-    document.getElementById('lastCommand').textContent = client.last_command || '—';
-    document.getElementById('lastTarget').textContent = client.target ? client.target.label : '—';
-    document.getElementById('lastSeen').textContent = client.last_seen ? new Date(client.last_seen * 1000).toLocaleTimeString() : '—';
-    document.getElementById('robotFrame').src = result.rendered_frame_url ? `${result.rendered_frame_url}?t=${Date.now()}` : '';
-}
-refreshRobotStatus();
-setInterval(refreshRobotStatus, 2000);
+    function setOnline() {
+        const pill = document.getElementById('clientConnected');
+        if (pill.textContent !== 'online') {
+            pill.textContent = 'online';
+            pill.className = 'pill online';
+        }
+    }
+
+    function setOffline() {
+        const pill = document.getElementById('clientConnected');
+        if (pill.textContent !== 'offline') {
+            pill.textContent = 'offline';
+            pill.className = 'pill danger';
+            document.getElementById('cameraName').textContent = '—';
+            document.getElementById('lastCommand').textContent = '—';
+            document.getElementById('lastTarget').textContent = '—';
+            document.getElementById('robotFrame').src = '';
+        }
+    }
+
+    socket.on('connect', () => {
+        console.log('Підключено до сервера WebSocket на сторінці статусу.');
+    });
+
+    socket.on('disconnect', () => {
+        console.log('Відключено від сервера WebSocket.');
+        setOffline();
+    });
+
+    socket.on('dashboard_update', (data) => {
+        if (!data || !data.success) return;
+
+        // Як тільки ми отримуємо кадр, ми точно знаємо, що якесь джерело (клієнт) онлайн
+        setOnline();
+
+        // Скидаємо таймер
+        clearTimeout(offlineTimeout);
+        // Якщо протягом 2 секунд сервер не надішле жодного кадру - вважаємо, що клієнт відключився
+        offlineTimeout = setTimeout(setOffline, 2000);
+
+        const control = data.control || {};
+        const target = data.target || {};
+
+        document.getElementById('cameraName').textContent = data.source || '—';
+        document.getElementById('lastCommand').textContent = control.command || '—';
+        document.getElementById('lastTarget').textContent = target.label || '—';
+        document.getElementById('lastSeen').textContent = new Date(data.server_time * 1000).toLocaleTimeString();
+
+        if (data.rendered_frame) {
+            document.getElementById('robotFrame').src = data.rendered_frame;
+        }
+    });
 </script>
 {% endblock %}
