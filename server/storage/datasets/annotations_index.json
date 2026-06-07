@@ -1,317 +1,86 @@
 [
   {
-    "image_name": "06454b83daf744a2a66bd8319aae0601.jpg",
-    "saved_image": "06454b83daf744a2a66bd8319aae0601.jpg",
-    "label_file": "06454b83daf744a2a66bd8319aae0601.txt",
+    "image_name": "29992266610d4ab19ac6d187c2f15970.jpg",
+    "saved_image": "29992266610d4ab19ac6d187c2f15970.jpg",
+    "label_file": "29992266610d4ab19ac6d187c2f15970.txt",
     "split": "train",
     "classes": [
-      "person",
-      "car",
-      "bicycle"
+      "car"
     ],
     "boxes_count": 1,
     "boxes": [
       {
-        "label": "person",
+        "label": "car",
         "class_id": 0,
-        "x1": 73,
-        "y1": 85,
-        "x2": 381,
-        "y2": 459,
+        "x1": 1350,
+        "y1": 506,
+        "x2": 2981,
+        "y2": 1538,
         "normalized": [
-          0.47890295358649787,
-          0.46258503401360546,
-          0.6497890295358649,
-          0.6360544217687075
+          0.5639322916666667,
+          0.42583333333333334,
+          0.42473958333333334,
+          0.43
         ]
       }
     ],
-    "image_width": 474,
-    "image_height": 588
+    "image_width": 3840,
+    "image_height": 2400
   },
   {
-    "image_name": "104c7b25986a4500b21d9f2a661a639e.jpg",
-    "saved_image": "104c7b25986a4500b21d9f2a661a639e.jpg",
-    "label_file": "104c7b25986a4500b21d9f2a661a639e.txt",
-    "split": "train",
-    "classes": [
-      "person",
-      "car",
-      "bicycle"
-    ],
-    "boxes_count": 1,
-    "boxes": [
-      {
-        "label": "person",
-        "class_id": 0,
-        "x1": 195,
-        "y1": 24,
-        "x2": 586,
-        "y2": 305,
-        "normalized": [
-          0.45406976744186045,
-          0.41125,
-          0.45465116279069767,
-          0.7025
-        ]
-      }
-    ],
-    "image_width": 860,
-    "image_height": 400
-  },
-  {
-    "image_name": "250193347421498a85d323feb1cea6bd.jpg",
-    "saved_image": "250193347421498a85d323feb1cea6bd.jpg",
-    "label_file": "250193347421498a85d323feb1cea6bd.txt",
+    "image_name": "b50edc13070c42dd87971f1f093e8244.jpeg",
+    "saved_image": "b50edc13070c42dd87971f1f093e8244.jpeg",
+    "label_file": "b50edc13070c42dd87971f1f093e8244.txt",
     "split": "val",
     "classes": [
-      "person",
-      "car",
-      "bicycle"
-    ],
-    "boxes_count": 1,
-    "boxes": [
-      {
-        "label": "person",
-        "class_id": 0,
-        "x1": 50,
-        "y1": 86,
-        "x2": 170,
-        "y2": 171,
-        "normalized": [
-          0.5069124423963134,
-          0.5538793103448276,
-          0.5529953917050692,
-          0.36637931034482757
-        ]
-      }
-    ],
-    "image_width": 217,
-    "image_height": 232
-  },
-  {
-    "image_name": "357e65fc57c143e895d026b1aedab3d0.jpg",
-    "saved_image": "357e65fc57c143e895d026b1aedab3d0.jpg",
-    "label_file": "357e65fc57c143e895d026b1aedab3d0.txt",
-    "split": "train",
-    "classes": [
-      "person",
-      "car",
-      "bicycle"
-    ],
-    "boxes_count": 1,
-    "boxes": [
-      {
-        "label": "person",
-        "class_id": 0,
-        "x1": 56,
-        "y1": 48,
-        "x2": 267,
-        "y2": 154,
-        "normalized": [
-          0.5706713780918727,
-          0.5674157303370787,
-          0.7455830388692579,
-          0.5955056179775281
-        ]
-      }
-    ],
-    "image_width": 283,
-    "image_height": 178
-  },
-  {
-    "image_name": "7645e99bd2c4445483849d6b6cac0067.jpg",
-    "saved_image": "7645e99bd2c4445483849d6b6cac0067.jpg",
-    "label_file": "7645e99bd2c4445483849d6b6cac0067.txt",
-    "split": "train",
-    "classes": [
-      "person",
-      "car",
-      "bicycle"
-    ],
-    "boxes_count": 2,
-    "boxes": [
-      {
-        "label": "car",
-        "class_id": 1,
-        "x1": 46,
-        "y1": 54,
-        "x2": 90,
-        "y2": 209,
-        "normalized": [
-          0.14345991561181434,
-          0.22363945578231292,
-          0.09282700421940929,
-          0.26360544217687076
-        ]
-      },
-      {
-        "label": "car",
-        "class_id": 1,
-        "x1": 146,
-        "y1": 100,
-        "x2": 415,
-        "y2": 488,
-        "normalized": [
-          0.5917721518987342,
-          0.5,
-          0.5675105485232067,
-          0.6598639455782312
-        ]
-      }
-    ],
-    "image_width": 474,
-    "image_height": 588
-  },
-  {
-    "image_name": "9d6edc4143c44cffb2534c35d4573153.jpeg",
-    "saved_image": "9d6edc4143c44cffb2534c35d4573153.jpeg",
-    "label_file": "9d6edc4143c44cffb2534c35d4573153.txt",
-    "split": "train",
-    "classes": [
-      "person",
-      "car",
-      "bicycle"
-    ],
-    "boxes_count": 1,
-    "boxes": [
-      {
-        "label": "person",
-        "class_id": 0,
-        "x1": 139,
-        "y1": 159,
-        "x2": 1086,
-        "y2": 590,
-        "normalized": [
-          0.4861111111111111,
-          0.48260309278350516,
-          0.7515873015873016,
-          0.5554123711340206
-        ]
-      }
-    ],
-    "image_width": 1260,
-    "image_height": 776
-  },
-  {
-    "image_name": "9daa0ca5fcbb404dafd853587422aa96.jpeg",
-    "saved_image": "9daa0ca5fcbb404dafd853587422aa96.jpeg",
-    "label_file": "9daa0ca5fcbb404dafd853587422aa96.txt",
-    "split": "val",
-    "classes": [
-      "person",
-      "car",
-      "bicycle"
-    ],
-    "boxes_count": 1,
-    "boxes": [
-      {
-        "label": "person",
-        "class_id": 0,
-        "x1": 129,
-        "y1": 160,
-        "x2": 1166,
-        "y2": 578,
-        "normalized": [
-          0.5138888888888888,
-          0.47551546391752575,
-          0.823015873015873,
-          0.538659793814433
-        ]
-      }
-    ],
-    "image_width": 1260,
-    "image_height": 776
-  },
-  {
-    "image_name": "cd6fa217f963484fb2de0143e0b3cb16.jpg",
-    "saved_image": "cd6fa217f963484fb2de0143e0b3cb16.jpg",
-    "label_file": "cd6fa217f963484fb2de0143e0b3cb16.txt",
-    "split": "train",
-    "classes": [
-      "person",
-      "car",
-      "bicycle",
-      "test"
-    ],
-    "boxes_count": 1,
-    "boxes": [
-      {
-        "label": "test",
-        "class_id": 3,
-        "x1": 32,
-        "y1": 74,
-        "x2": 185,
-        "y2": 183,
-        "normalized": [
-          0.5,
-          0.5538793103448276,
-          0.7050691244239631,
-          0.4698275862068966
-        ]
-      }
-    ],
-    "image_width": 217,
-    "image_height": 232
-  },
-  {
-    "image_name": "d263b1b9d1a14b65ab4c5347a1d0adf7.jpg",
-    "saved_image": "d263b1b9d1a14b65ab4c5347a1d0adf7.jpg",
-    "label_file": "d263b1b9d1a14b65ab4c5347a1d0adf7.txt",
-    "split": "train",
-    "classes": [
-      "person",
-      "car",
-      "bicycle"
-    ],
-    "boxes_count": 1,
-    "boxes": [
-      {
-        "label": "person",
-        "class_id": 0,
-        "x1": 64,
-        "y1": 57,
-        "x2": 275,
-        "y2": 163,
-        "normalized": [
-          0.598939929328622,
-          0.6179775280898876,
-          0.7455830388692579,
-          0.5955056179775281
-        ]
-      }
-    ],
-    "image_width": 283,
-    "image_height": 178
-  },
-  {
-    "image_name": "e7814846bc2f4214bc9eab22e1485f26.jpeg",
-    "saved_image": "e7814846bc2f4214bc9eab22e1485f26.jpeg",
-    "label_file": "e7814846bc2f4214bc9eab22e1485f26.txt",
-    "split": "train",
-    "classes": [
-      "person",
-      "car",
-      "bicycle"
+      "car"
     ],
     "boxes_count": 1,
     "boxes": [
       {
         "label": "car",
-        "class_id": 1,
-        "x1": 122,
-        "y1": 69,
-        "x2": 1058,
-        "y2": 623,
+        "class_id": 0,
+        "x1": 810,
+        "y1": 2141,
+        "x2": 2306,
+        "y2": 3082,
         "normalized": [
-          0.46825396825396826,
-          0.44587628865979384,
-          0.7428571428571429,
-          0.7139175257731959
+          0.44937986732044993,
+          0.7532448802999712,
+          0.43149697144505333,
+          0.27141620997980964
         ]
       }
     ],
-    "image_width": 1260,
-    "image_height": 776
+    "image_width": 3467,
+    "image_height": 3467
+  },
+  {
+    "image_name": "c3f154a832fe4d2d9da245feb0e2b4d7.jpg",
+    "saved_image": "c3f154a832fe4d2d9da245feb0e2b4d7.jpg",
+    "label_file": "c3f154a832fe4d2d9da245feb0e2b4d7.txt",
+    "split": "train",
+    "classes": [
+      "car"
+    ],
+    "boxes_count": 1,
+    "boxes": [
+      {
+        "label": "car",
+        "class_id": 0,
+        "x1": 1863,
+        "y1": 1650,
+        "x2": 3033,
+        "y2": 2313,
+        "normalized": [
+          0.4894042383046781,
+          0.6205762605699968,
+          0.23390643742502998,
+          0.2076417162543063
+        ]
+      }
+    ],
+    "image_width": 5002,
+    "image_height": 3193
   }
 ]
