@@ -17,6 +17,7 @@ class Detection:
     y1: int
     x2: int
     y2: int
+    track_id: Optional[int] = None
 
     @property
     def cx(self) -> int:
@@ -38,6 +39,7 @@ class Detection:
             "box": [self.x1, self.y1, self.x2, self.y2],
             "center": [self.cx, self.cy],
             "area": self.area,
+            "track_id": self.track_id,
         }
 
 
@@ -45,6 +47,7 @@ class VisionEngine:
     def __init__(self, model_name: str = "yolov8n.pt") -> None:
         self.model_name = model_name
         self.model: Optional[YOLO] = None
+        self.tracker_config = "bytetrack.yaml"
 
     def ensure_model(self) -> YOLO:
         if self.model is None:
@@ -57,20 +60,32 @@ class VisionEngine:
 
     def detect(self, frame: np.ndarray, conf: float = 0.35) -> List[Detection]:
         model = self.ensure_model()
-        results = model.predict(source=frame, verbose=False, conf=conf)
+        results = model.track(
+            source=frame,
+            verbose=False,
+            conf=conf,
+            persist=True,
+            tracker=self.tracker_config,
+        )
         if not results:
             return []
 
-        names = results[0].names
+        result = results[0]
+        names = result.names
         detections: List[Detection] = []
 
-        if results[0].boxes is None:
+        if result.boxes is None:
             return detections
 
-        for box in results[0].boxes:
+        ids = None
+        if getattr(result.boxes, "id", None) is not None:
+            ids = result.boxes.id.int().cpu().tolist()
+
+        for idx, box in enumerate(result.boxes):
             xyxy = box.xyxy[0].cpu().numpy().astype(int).tolist()
             cls_id = int(box.cls[0].item())
             score = float(box.conf[0].item())
+            track_id = ids[idx] if ids and idx < len(ids) else None
             detections.append(
                 Detection(
                     cls_id=cls_id,
@@ -80,6 +95,7 @@ class VisionEngine:
                     y1=xyxy[1],
                     x2=xyxy[2],
                     y2=xyxy[3],
+                    track_id=track_id,
                 )
             )
         return detections
@@ -89,11 +105,18 @@ class VisionEngine:
         for det in detections:
             color = (76, 201, 240)
             thickness = 2
-            if target and det.x1 == target.x1 and det.y1 == target.y1 and det.x2 == target.x2 and det.y2 == target.y2:
+            is_target = False
+            if target:
+                if det.track_id is not None and target.track_id is not None:
+                    is_target = det.track_id == target.track_id
+                else:
+                    is_target = det.x1 == target.x1 and det.y1 == target.y1 and det.x2 == target.x2 and det.y2 == target.y2
+            if is_target:
                 color = (99, 102, 241)
                 thickness = 3
             cv2.rectangle(rendered, (det.x1, det.y1), (det.x2, det.y2), color, thickness)
-            text = f"{det.label} {det.confidence:.2f}"
+            id_part = f" #{det.track_id}" if det.track_id is not None else ""
+            text = f"{det.label}{id_part} {det.confidence:.2f}"
             cv2.putText(rendered, text, (det.x1, max(20, det.y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
             cv2.circle(rendered, (det.cx, det.cy), 4, color, -1)
         return rendered
