@@ -192,9 +192,11 @@ def handle_video_frame(data):
             source_name = data.get("source", "Webcam")
             frame_data = data.get("frame")
         if isinstance(frame_data, bytes):
+            # Декодування сирих байтів (мобільний Android-клієнт)
             pil_image = Image.open(io.BytesIO(frame_data))
             frame = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
         elif isinstance(frame_data, str):
+            # Декодування Base64-рядка (основний Python-клієнт)
             if "," in frame_data: frame_data = frame_data.split(",", 1)[1]
             binary = base64.b64decode(frame_data)
             arr = np.frombuffer(binary, dtype=np.uint8)

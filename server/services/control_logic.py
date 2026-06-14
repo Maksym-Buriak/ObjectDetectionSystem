@@ -33,7 +33,7 @@ def _choose_locked_target(detections: list[Detection], manual_lock: dict) -> Opt
         for det in detections:
             if det.track_id == preferred_track_id:
                 return det
-        return None
+
 
     preferred_label = manual_lock.get("label")
     last_center = manual_lock.get("last_center") or [None, None]

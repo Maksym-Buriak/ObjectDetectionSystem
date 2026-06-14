@@ -19,6 +19,7 @@ if str(ROOT_DIR) not in sys.path:
 # --- Глобальні змінні ---
 sio = socketio.Client()
 last_control_command = {}
+previous_printed_command = ""
 is_running = True
 DEVICE_ID = f"robot_pc_{socket.gethostname()}" # Унікальний ID поточного клієнта
 
@@ -35,11 +36,20 @@ def on_disconnect():
         print("Відключено від сервера WebSocket. Завершення роботи клієнта...")
         is_running = False
 
+# Асинхронний обробник отримання команд керування
 @sio.on("control_response")
 def on_control_response(data):
-    global last_control_command
+    global last_control_command, previous_printed_command
     if "control" in data:
         last_control_command = data["control"]
+
+        cmd = last_control_command.get("command", "WAIT")
+        reason = last_control_command.get("reason", "")
+
+        log_message = f"command: {cmd} | reason: {reason}"
+        if log_message != previous_printed_command:
+            print(f"[SERVER] {log_message}")
+            previous_printed_command = log_message
 
 # --- Основна логіка клієнта ---
 def send_frames(camera_index: int, show_window: bool, fps: int, client_name: str):
@@ -85,10 +95,25 @@ def send_frames(camera_index: int, show_window: bool, fps: int, client_name: str
         if show_window:
             display_frame = frame.copy()
             cmd = last_control_command.get("command", "WAIT")
-            reason = last_control_command.get("reason", "")
+            reason_ua = last_control_command.get("reason", "").strip()
+
+            translation_map = {
+                "Обрана ціль тимчасово відсутня у кадрі": "Target temporarily lost",
+                "Ціль не знайдена": "Target not found",
+                "Ціль зміщена відносно центру кадру": "Target off-center",
+                "Ціль у центрі, але ще далека": "Target centered, approaching",
+                "Ціль зафіксована": "Target locked"
+            }
+
+            if reason_ua == "":
+                reason_en = ""
+            else:
+                # Якщо ключа немає, повертаємо "Unknown status"
+                reason_en = translation_map.get(reason_ua, "Unknown status")
+
             cv2.putText(display_frame, f"CMD: {cmd}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            if reason:
-                cv2.putText(display_frame, reason, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            if reason_en:
+                cv2.putText(display_frame, reason_en, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
             
             cv2.imshow(window_name, display_frame)
             if cv2.waitKey(1) & 0xFF == ord('q') or not is_running:
